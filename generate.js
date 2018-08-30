@@ -1,6 +1,7 @@
 const fs = require('fs').promises
 const path = require('path')
 const fetch = require('node-fetch')
+const colors = require('colors')
 
 const lon2tile = (lon, zoom) =>
   Math.floor((lon + 180) / 360 * Math.pow(2, zoom))
@@ -16,18 +17,27 @@ const lat2tile = (lat, zoom) =>
       Math.pow(2, zoom)
   )
 
+const padding = 5
+const verbose = false
+const log = {
+  log: (...a) => console.log(...a),
+  info: (...a) => console.log(...a),
+  debug: (...a) => verbose ? console.log(...a) : null,
+  warn: (...a) => console.warn(...a),
+  error: (...a) => console.error(...a)
+}
+
 const config = {
   prefix: 'nz-akl',
-  hostname: 'http://localhost:8090/styles/dymajo-style',
+  hostname: 'http://localhost:8090/styles/dymajo',
   lat_min: -37.39747,
   lat_max: -36.54297,
   lon_min: 174.43058,
   lon_max: 175.09714,
   zoom_min: 1,
-  zoom_max: 3,
+  zoom_max: 10,
 }
 const generate = async (config, zoom) => {
-  const padding = 1
   const start_lat = lat2tile(config.lat_min, zoom) + padding
   const end_lat = lat2tile(config.lat_max, zoom) - padding
   const start_lon = lon2tile(config.lon_min, zoom) - padding
@@ -42,11 +52,30 @@ const generate = async (config, zoom) => {
   const raw = await fs.readFile(lastExportFile)
   const lastExport = JSON.parse(raw.toString())
 
-  console.log('Generating the following tiles:')
-  console.log(`lat: ${end_lat} -> ${start_lat}`)
-  console.log(`lon: ${start_lon} -> ${end_lon}`)
-  const total = (start_lat - end_lat + 1) * (end_lon - start_lon + 1)
-  console.log(`${total} tiles to be generated`)
+  log.log('Zoom Level:'.cyan, zoom)
+  log.log('Generating the following tiles:'.magenta)
+  log.log(`lat: ${end_lat} -> ${start_lat}`)
+  log.log(`lon: ${start_lon} -> ${end_lon}`)
+
+  let skip_start_lat = null
+  let skip_end_lat = null
+  let skip_start_lon = null
+  let skip_end_lon = null
+  let totalSkipped = 0
+  if (lastExport.hasOwnProperty('exports') && lastExport.exports.hasOwnProperty(zoom)) {
+    skip_start_lat = lastExport.exports[zoom].start_lat
+    skip_end_lat = lastExport.exports[zoom].end_lat
+    skip_start_lon = lastExport.exports[zoom].start_lon
+    skip_end_lon = lastExport.exports[zoom].end_lon
+
+    log.log('Skipping following tiles:'.magenta)
+    log.log(`lat: ${skip_end_lat} -> ${skip_start_lat}`)
+    log.log(`lon: ${skip_start_lon} -> ${skip_end_lon}`)
+    totalSkipped = (skip_start_lat - skip_end_lat + 1) * (skip_end_lon - skip_start_lon + 1)
+  }
+
+  const total = (start_lat - end_lat + 1) * (end_lon - start_lon + 1) - totalSkipped
+  log.log(`${total} tiles to be generated`.magenta)
 
   // makes the zoom directory if it doesn't already exist
   const zoomDir = path.join(__dirname, `/output/${zoom}`)
@@ -65,9 +94,13 @@ const generate = async (config, zoom) => {
       await fs.mkdir(lon_dir)
     }
     for (let j = end_lat; j <= start_lat; j++) {
+      if (j >= skip_end_lat && j <= skip_start_lat && i >= skip_start_lon && i <= skip_end_lon) {
+        log.debug('Skipping', i, j)
+        continue
+      }
       const data = await fetch(`${config.hostname}/${zoom}/${i}/${j}@2x.png`)
       if (data.status !== 200) {
-        console.log('Error', data.status, i, j)
+        log.warn('Error', data.status, i, j)
       } else {
         // looks like nodejs needs a buffer, not an array buffer
         const arrayBuffer = await data.arrayBuffer()
@@ -76,7 +109,7 @@ const generate = async (config, zoom) => {
           Buffer.from(arrayBuffer),
           'utf8'
         )
-        console.log('Saved', i, j)
+        log.debug('Saved', i, j)
         count++
       }
     }
@@ -97,7 +130,8 @@ const generate = async (config, zoom) => {
     end_lon: end_lon,
   }
   await fs.writeFile(lastExportFile, JSON.stringify(lastExport, null, 2))
-  console.log(`Saved ${count} tiles. Skipped ${total - count}.`)
+  log.log(`Saved ${count} tiles. Skipped ${total - count}.`.green)
+  log.log('')
 }
 
 start = async () => {
