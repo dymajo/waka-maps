@@ -1,5 +1,5 @@
-$s3Bucket = "jono-map-test"
-$s3Prefix = "dymajo-tiles"
+$s3Bucket = "waka-maps-ap-southeast-2"
+$s3Prefix = "osm_tiles"
 $outputPath = (Join-Path -Path (Get-Item $PSCommandPath ).DirectoryName -ChildPath "output")
 
 # Loops output folder to find all files, and upload them
